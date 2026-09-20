@@ -42,6 +42,43 @@
 typedef cpuset_t cpu_set_t;
 #endif
 
+#ifdef __APPLE__
+/*
+ * macOS has no equivalent of Linux's sched_setaffinity()/sched_getaffinity()
+ * or glibc's dynamically sized CPU_SET family
+  */
+#include <string.h>
+#define CPU_SETSIZE 1024
+typedef struct {
+	unsigned long bits[CPU_SETSIZE / (8 * sizeof(unsigned long))];
+} cpu_set_t;
+#define CPU_ALLOC_SIZE(n) sizeof(cpu_set_t)
+#define CPU_ZERO_S(setsize, set) memset((set), 0, (setsize))
+#define CPU_SET_S(cpu, setsize, set) \
+	((void) (setsize), \
+	 (set)->bits[(cpu) / (8 * sizeof(unsigned long))] |= \
+		(1UL << ((cpu) % (8 * sizeof(unsigned long)))))
+#define CPU_CLR_S(cpu, setsize, set) \
+	((void) (setsize), \
+	 (set)->bits[(cpu) / (8 * sizeof(unsigned long))] &= \
+		~(1UL << ((cpu) % (8 * sizeof(unsigned long)))))
+#define CPU_ISSET_S(cpu, setsize, set) \
+	((void) (setsize), \
+	 !!((set)->bits[(cpu) / (8 * sizeof(unsigned long))] & \
+	    (1UL << ((cpu) % (8 * sizeof(unsigned long))))))
+
+static inline int _xsched_apple_cpu_count_s(size_t setsize, const cpu_set_t *set)
+{
+	size_t i;
+	int count = 0;
+	(void) setsize;
+	for (i = 0; i < (CPU_SETSIZE / (8 * sizeof(unsigned long))); i++)
+		count += __builtin_popcountl(set->bits[i]);
+	return count;
+}
+#define CPU_COUNT_S(setsize, set) _xsched_apple_cpu_count_s(setsize, set)
+#endif
+
 #include <sched.h>
 
 typedef struct {

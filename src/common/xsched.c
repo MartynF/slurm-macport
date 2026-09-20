@@ -37,9 +37,26 @@
 #include <stdbool.h>
 #include <string.h>
 
+#ifdef __APPLE__
+#include <sys/sysctl.h>
+#endif
+
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xsched.h"
+
+#ifdef __APPLE__
+static int _apple_ncpus(void)
+{
+	int ncpus = 1;
+	size_t len = sizeof(ncpus);
+
+	if (sysctlbyname("hw.logicalcpu", &ncpus, &len, NULL, 0))
+		ncpus = 1;
+
+	return ncpus;
+}
+#endif
 
 extern xcpuset_t *xcpuset_alloc(void)
 {
@@ -50,9 +67,6 @@ extern xcpuset_t *xcpuset_alloc(void)
 
 extern char *task_cpuset_to_str(const xcpuset_t *mask)
 {
-#if defined(__APPLE__)
-	fatal("%s: not supported on macOS", __func__);
-#else
 	int base;
 	bool leading_zeros = true;
 	char *str = xmalloc((mask->max_cpus / 4) + 1);
@@ -79,14 +93,10 @@ extern char *task_cpuset_to_str(const xcpuset_t *mask)
 	if (leading_zeros)
 		*ptr++ = '0';
 	return str;
-#endif
 }
 
 extern xcpuset_t *task_str_to_cpuset(const char *str)
 {
-#if defined(__APPLE__)
-	fatal("%s: not supported on macOS", __func__);
-#else
 	xcpuset_t *mask = NULL;
 	int len = strlen(str);
 	const char *ptr = str + len - 1;
@@ -127,25 +137,35 @@ extern xcpuset_t *task_str_to_cpuset(const char *str)
 	}
 
 	return mask;
-#endif
 }
+
+#if defined(__APPLE__)
+#warning "xsetaffinity() is a no-op on macOS"
+#endif
 
 extern int xsetaffinity(pid_t pid, xcpuset_t *mask)
 {
 	int rval;
 
-#ifdef __FreeBSD__
+#if defined(__APPLE__)
+	/* No implemetation to back it up */
+	verbose("xsetaffinity(%d): CPU affinity is not supported on macOS",
+		pid);
+	rval = 0;
+#elif defined(__FreeBSD__)
 	rval = cpuset_setaffinity(CPU_LEVEL_WHICH, CPU_WHICH_PID, pid,
 				  mask->size, &mask->mask);
 #else
 	rval = sched_setaffinity(pid, mask->size, &mask->mask);
 #endif
+#if !defined(__APPLE__)
 	if (rval) {
 		char *mstr = task_cpuset_to_str(mask);
 		verbose("sched_setaffinity(%d,%zu,0x%s) failed: %m",
 			pid, mask->size, mstr);
 		xfree(mstr);
 	}
+#endif
 	return rval;
 }
 
@@ -160,7 +180,15 @@ static int _getaffinity(pid_t pid, xcpuset_t *mask)
 	 * is a PID.  -1 indicates the PID of the calling process.
 	 * Linux sched_*etaffinity() uses 0 for this.
 	 */
-#ifdef __FreeBSD__
+#if defined(__APPLE__)
+	/* No affinity API on macOS; report all CPUs available. */
+	{
+		int i, ncpus = _apple_ncpus();
+		for (i = 0; i < ncpus && i < (int) mask->max_cpus; i++)
+			XCPU_SET(i, mask);
+	}
+	return 0;
+#elif defined(__FreeBSD__)
 	return cpuset_getaffinity(CPU_LEVEL_WHICH, CPU_WHICH_PID, pid,
 				  mask->size, &mask->mask);
 #else

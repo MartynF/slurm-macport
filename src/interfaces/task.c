@@ -441,9 +441,6 @@ extern int task_g_update_mem_limit(stepd_step_rec_t *step, uint64_t new_job_mem,
 extern void task_slurm_chkaffinity(xcpuset_t *mask, stepd_step_rec_t *step,
 				   int statval, uint32_t node_tid)
 {
-#if defined(__APPLE__)
-	fatal("%s: not supported on macOS", __func__);
-#else
 	char *bind_type, *action, *status, *units;
 	char *mstr = NULL;
 
@@ -496,5 +493,4 @@ extern void task_slurm_chkaffinity(xcpuset_t *mask, stepd_step_rec_t *step,
 		node_tid, step->task[node_tid]->pid, mstr, action, status);
 
 	xfree(mstr);
-#endif
 }
