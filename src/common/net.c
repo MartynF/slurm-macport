@@ -564,9 +564,12 @@ extern int net_get_peer(int fd, uid_t *cred_uid, gid_t *cred_gid,
 	struct xucred cred = {
 		.cr_uid = SLURM_AUTH_NOBODY,
 		.cr_groups = { SLURM_AUTH_NOBODY, },
+#if !defined(__APPLE__)
 		.cr_pid = 0,
+#endif
 	};
 	socklen_t len = sizeof(cred);
+	pid_t pid = 0;
 
 	if (getsockopt(fd, 0, LOCAL_PEERCRED, &cred, &len)) {
 		log_flag(NET, "%s: [fd:%d] getsockopt(SO_PEERCRED) failed: %m",
@@ -574,9 +577,23 @@ extern int net_get_peer(int fd, uid_t *cred_uid, gid_t *cred_gid,
 		return ESLURM_AUTH_SOCKET_INVALID_PEER;
 	}
 
+#if defined(__APPLE__)
+	/*
+	 * xucred has no cr_pid - the pid is retrieved via a separate call
+	 */
+	len = sizeof(pid);
+	if (getsockopt(fd, SOL_LOCAL, LOCAL_PEERPID, &pid, &len)) {
+		log_flag(NET, "%s: [fd:%d] getsockopt(LOCAL_PEERPID) failed: %m",
+			 __func__, fd);
+		return ESLURM_AUTH_SOCKET_INVALID_PEER;
+	}
+#else
+	pid = cred.cr_pid;
+#endif
+
 	*cred_uid = cred.cr_uid;
 	*cred_gid = cred.cr_groups[0];
-	*cred_pid = cred.cr_pid;
+	*cred_pid = pid;
 #endif
 
 	/* Sanity check returned creds */
